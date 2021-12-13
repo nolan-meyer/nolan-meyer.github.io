@@ -1,0 +1,19 @@
+---
+title: "Bayesian Statistics Capstone Project"
+description: |
+  Bayesian Finance: Modeling Earnings for S&P 500 Companies 
+preview: website_report_screenshot.png
+date: 12-15-2021
+output: 
+  distill::distill_article:
+  self_contained: false
+---
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+**Abstract**
+
+Financial information, like stock market prices, are known to be notoriously hard to predict. We wanted to take a Bayesian approach to try and tackle a similar situation: predicting the future earnings of S&P 500 companies. In this project we seek to model future earnings using other financial information about a company, like previous earnings and sales. We explore a few Bayesian hierarchical models, as well as a bayesforcast model to try and identify one that can provide insight and better predictions for future company's earnings. 
+
+Our project report can be found at: [https://nolan-meyer.github.io/bayesian-finance/](https://nolan-meyer.github.io/bayesian-finance/)
