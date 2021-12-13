@@ -1,0 +1,31 @@
+---
+title: "Nolan E. Meyer"
+description: |
+  Aspiring Data Scientist/Analyst
+image: headshot.jpeg
+links:
+  - label: LinkedIn
+    url: "https://www.linkedin.com/in/nolan-meyer-983ab1199/"
+  - label: GitHub
+    url: "https://github.com/nolan-meyer"
+  - label: Email
+    url: "mailto:nmeyer2@macalester.edu"
+site: distill::distill_website
+output: 
+  postcards::trestles
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(postcards)
+
+# Learn more about creating websites with Distill at:
+# https://rstudio.github.io/distill/website.html
+
+# Learn more about publishing to GitHub Pages at:
+# https://rstudio.github.io/distill/publish_website.html#github-pages
+
+```
+
+I’m a current undergraduate student-athlete at Macalester College, pursuing a B.A. in applied mathematics and statistics (expected May 2023) along with a minor in computer science. I’m working towards a future career in data analysis, data science, or other related fields. I have a strong passion for numbers and their practical applications, as well as working to solve meaningful problems that can have an impact for the greater good. Hosted on this website is a collection of my works in this field, ranging from school group projects, internships, and independent projects. 
