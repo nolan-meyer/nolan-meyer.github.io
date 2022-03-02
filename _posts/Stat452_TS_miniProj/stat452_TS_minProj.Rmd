@@ -1,0 +1,249 @@
+---
+title: "Time Series Mini Project"
+description: |
+  Modeling Google Search Trend Data: MLB 
+preview: ts_preview.png
+date: 3-1-2022
+output: 
+  distill::distill_article:
+  self_contained: false
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+bibliography: Library.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warnings=FALSE)
+
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(ggplot2)
+library(splines)
+library(readr)
+library(astsa)
+```
+
+
+Authors: Nolan Meyer & Declan Elias
+
+## Introduction
+
+Baseball has a pastime rooted in American sports history, and has been one of the most popular sports in America for many generations. The first season began in 1901, and the popularity has grown ever since to a point where baseball stars have become household names across the country. The MLB -- Major League Baseball -- is the top baseball league in the US where each team plays 162 games during the regular season from late March/early April until late October/early November. Given its long existence, we are interested in studying how the popularity of the sport has changed over time and how the popularity varies within each year as well.
+
+
+
+## Data
+
+We are using Google search trend data for the term "MLB" from January 2004 to February 2022. The data gives us the popularity of the search term for each month in the time period. The values range from 0-100. A value of 100 represents the peak popularity of the search term. A value of 50 means the term is half as popular. A score of 0 means there was not enough data for the search popularity at that time. 
+
+The variables of interest are the month and the popularity of that given month. The variables were measured by Google using data from the amount of searches in the given month. 
+
+
+
+## Methods
+
+In the original, un-transformed data, the trend cycles showed a large increase in variance over time, so we log transformed the data to reduce this increase in variance.  
+
+```{r, echo = T, results='hide'}
+mlb = read.csv("multiTimeline.csv")
+colnames(mlb) = c("popularity")
+mlb = mlb[-1,, drop = FALSE]
+mlb = mlb %>%
+  mutate(log.popularity = log(as.numeric(popularity)),
+         Month = (1:nrow(mlb) - 1) %% 12 + 1,
+         Year = rep((1:nrow(mlb) - 1) %/% 12 + 2004),
+         Date = paste(Year, Month, 1 , sep = '-'),
+         Date = ymd(Date),
+         Date_dec = decimal_date(Date),
+         pandemic = if_else(Month %in% c(3, 4, 5, 6) & Year == 2020, 1, 0))
+```
+
+To estimate and model the trend, we used b-splines of varying degrees to try and accurately capture the general pattern of the data. We tested b-splines with degrees of 2, 3, and 4 to model the trend. All three estimates of the trend included a knot at 2020 as there is some irregularity in the data due to COVID that year. We selected the model that best captured the trend and led to less variability in the resulting residuals.
+
+```{r, echo = T, results='hide'}
+mlb = mlb %>%
+  mutate(mlbTrend2 = predict(lm(log.popularity ~ bs( Date_dec, knots= c(2020), degree = 2), data = mlb)))
+
+mlb = mlb %>%
+  mutate(mlbTrend3 = predict(lm(log.popularity ~ bs( Date_dec, knots= c(2020), degree = 3), data = mlb)))
+
+mlb = mlb %>%
+  mutate(mlbTrend4 = predict(lm(log.popularity ~ bs( Date_dec, knots= c(2020), degree = 4), data = mlb)))
+
+mlb = mlb %>%
+  mutate(Detrend3 = log.popularity - mlbTrend3,
+         Detrend2 = log.popularity - mlbTrend2,
+         Detrend4 = log.popularity - mlbTrend4)
+```
+
+To model the seasonality, we used indicator variables for the month to estimate the monthly average deviations due to the seasonality. We also added an indicator for the months during the pandemic, as we noticed some different trends during this time period. By doing this we can plot the average monthly deviations and get a sense of the estimated seasonality of the data.
+
+```{r, echo = T, results='hide'}
+# Estimating Seasonality
+lm.season <- lm(Detrend2 ~ factor(Month) + pandemic:I(Month==3) + pandemic:I(Month==4), data = mlb)
+  
+mlb <- mlb %>%
+  mutate(Season = predict(lm.season, newdata = mlb))
+```
+
+After removing both the trend and seasonality using the 2nd degree b-splines and the month indicator variables, we are left with the remaining errors. To model the errors, we looked at the autocorrelation function using the astsa package of the errors to identify potential patterns that would indicate reasonable models to use. [@stoffer2021package] We ended up modeling the errors with an AR(15) model, an AR(1) model, and a seasonal AR(1) model. To decide between these models, we looked at the SARIMA output and compared the resulting acf plots and Ljung-Box tests, looking for acf plots that looked like white noise and higher values for the Ljung-Box test.
+
+```{r, echo = T, results='hide'}
+# Fitting the errors
+mlb <- mlb %>%
+  mutate(Errors = Detrend2 - Season)
+
+# Autocorrelation
+library(astsa)
+# acf2(mlb$Errors)
+
+errorTS = ts(mlb$Errors, start = c(2004, 1), frequency = 12)
+
+# Error models:
+# sarima(errorTS, p = 15, d = 0, q = 0)
+# sarima(errorTS, p = 1, d = 0, q = 0)
+# sarima(errorTS, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12)
+```
+
+Lastly, we combined the trend and seasonality models together, and then incorporated it with the seasonal AR(1) error model into a final SARIMA model and assessed its performance using similar methods as we did with the previous SARIMA models. Using this final model, we also did a 24 month forecast into the future to see what the model predicts will happen moving forward.
+
+```{r, echo = T, results='hide'}
+# Forecasting set-up
+Bknots = c(min(mlb$Date_dec),decimal_date(max(mlb$Date) %m+% months(24)))
+
+y = lm(log.popularity ~ bs(Date_dec, knots= c(2020), degree = 2,Boundary.knots =  Bknots) +factor(Month) + pandemic:I(Month==3) + pandemic:I(Month==4), data = mlb)
+X = model.matrix(y)[,-1]
+
+newdata = data.frame(Date = max(mlb$Date) %m+% months(1:24)) %>% 
+  mutate(Date_dec = decimal_date(Date), Month=month(Date), pandemic=0) 
+
+newX <- model.matrix(~bs(Date_dec, knots= c(2020), degree = 2,Boundary.knots =  Bknots) +factor(Month) + pandemic:I(Month==3) + pandemic:I(Month==4), newdata)[,-1]
+
+# Final SARIMA Model:
+# sarima(mlb_data, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12, xreg = X)
+
+# Forecasting into the future:
+# sarima.for(mlb_data, 24, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12, xreg = X,newxreg = newX)
+```
+
+Additionally, the following packages were used in our project to work with the data, make visualizations, and perform addition analyses: dplyr [@wickham2014dplyr], lubridate [@grolemund2013package], stringr [@wickham2019package], ggplot2 [@wickham2016package], splines [@bates2011package], and readr [@wickham2015package].
+
+
+
+## Results
+
+  Our first step in modeling the data was to first model the trend. We wanted a model that would estimate the trend without being affected by the seasonality. A linear model was considered, but because of the pandemic affected season in 2020 leading to a drop in popularity, we decided to go with a b-spline. Using a spline allowed us to have more flexibility by fitting different parts of the data with different models. 
+
+```{r results = "hide"}
+#echo = FALSE forces it to not show the code
+#results = "hide" hides the output but shows the code
+
+mlb %>%
+  ggplot(aes(x = Date, y = log.popularity)) +
+  geom_point() +
+  geom_line() +
+  geom_line(aes(y = mlbTrend3), color = "red") +
+  geom_line(aes(y = mlbTrend2), color = "Green") +
+  geom_line(aes(y = mlbTrend4), color = "Blue") +
+  theme_classic()
+```
+  
+  We fit splines of degree 2,3, and 4 using a knot at January 2020. Each of the three did a good job of fitting the trend. The residual plots showed all the models did a good job of estimating the trend, with degree 4 doing the best. This, however, comes at the expense of having a more complex model. A more complex model leads to higher variance. Because we see that all 3 of the models estimate a very similar trend, we choose the least complex model to fit the rest of the data. This left us with a b-spline of degree 2 with a knot at January 2020 as our trend estimate. 
+  
+```{r}
+# Trend residuals
+mlb %>%
+  ggplot(aes(x = Date, y = Detrend2)) +
+  geom_line() +
+  geom_smooth() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Degree 2") +
+  theme_classic()
+
+mlb %>%
+  ggplot(aes(x = Date, y = Detrend3)) +
+  geom_line() +
+  geom_smooth() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Degree 3") +
+  theme_classic()
+
+mlb %>%
+  ggplot(aes(x = Date, y = Detrend4)) +
+  geom_line() +
+  geom_smooth() +
+  geom_hline(yintercept = 0) +
+  labs(title = "Degree 4") +
+  theme_classic()
+```
+
+  We estimated the monthly average deviations due to seasonality by predicting the residuals as a function of the month, using the pandemic indicator variables. We added an indicator variable because we noticed some unusual trends due to the pandemic. We then plotted the average monthly deviations to get a sense of the estimated seasonality of the data. We see that the peak months for the log popularity is from April-October, with lows from November-March. in the residuals plot, we see that this method does best at removing the seasonality from ~2011-2015, while the other years have greater errors and variation.
+  
+  The residual plot also shows the model does a poor job of modeling the seasonality in 2020 and 2021. In 2020 it severely overestimates the the seasonality and does the opposite in 2021. 
+
+```{r}
+# Seasonality residuals 
+mlb %>%
+  ggplot(aes(x = Month, y = Detrend2, group = Year)) +
+  geom_point() +
+  geom_line() +
+  geom_line(aes(y = Season), color = "purple", size = 2) +
+  geom_hline(yintercept = 0) +
+  theme_classic()
+
+mlb %>%
+  ggplot(aes(x = Date, y = Errors)) + 
+  geom_point() +
+  geom_line() +
+  geom_hline(yintercept = 0) + 
+  theme_classic()
+```
+
+  After removing both the trend and seasonality using the 2nd degree b-splines and the month indicator variables, we are left with the remaining errors. Looking at the autocorrelation function we see the ACF plot decays to 0, and the PACF drops to 0 after 1 lag, but is not 0 again around 13. This indicates that a seasonal AR(1) will do the best job of modeling the errors.
+
+```{r}
+#autocorrelation
+acf2(mlb$Errors)
+```
+
+  The SARIMA function shows a seasonal AR(1) does an excellent job modeling the noise. The ACF of the residuals is all white noise, and the p values for the Ljung-Box statistic are all significantly above the threshold. 
+
+```{r}
+# Visualizing error model
+sarima(errorTS, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12)
+```
+
+  We forecasted the next two years using the seasonal AR(1) model with the estimates for the trend and seasonality. The model forecasted a small decrease in popularity each year for the next two years. This decrease makes sense because it is following the general shape of the trend model, with a continued decrease past 2021. 
+
+
+```{r}
+# Forecasting
+mlb_data = ts(mlb$log.popularity, start = c(2004, 1), frequency = 12)
+sarima(mlb_data, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12, xreg = X)
+
+
+sarima.for(mlb_data, 24, p = 1, d = 0, q = 0, P = 1, D = 0, S = 12, xreg = X,newxreg = newX)
+```
+
+
+## Conclusions
+
+  Our forecasting method showed some interesting results. It predicts a decrease in popularity for 2022 and 2023, even after an increase in popularity from 2020 to 2021. This is due to the COVID pandemic making us change the way we modeled the data. Modeling the trend of the popularity from 2004 to 2019 would be fairly easy to estimate and forecast as it was a fairly linear increase, but 2020 drastically affected the shape of the trend. 
+  
+  We had to use a b-spline to account for the decrease in popularity due to the pandemic. The spline did a good job modeling the trend. However, because the pandemic was so recent we had very limited data on how the popularity would rebound. Furthermore, splines are more variable on edge cases. Using the spline to forecast led to the prediction that popularity would decrease over the next few years. We cannot say for certain if our future predictions are good or not, but we believe them to be a conservative forecasting.
+  
+  On the other hand, the model appears to do a good job of forecasting the seasonality. The general shape of the previous years was kept in the forecast. This is due in part to the use of an indicator variable for the pandemic. Using an indicator variable caused the drastically different 2020 year to not have as large of an affect on the shape.
+  
+  The results show how much an event like the covid pandemic can affect statistical analysis. Because the pandemic shortened a season, it affected the distribution of the search popularity for 2020, and caused a decrease in popularity from 2019 to 2021, even thought there was a fairly strong upward trend from 2004 to 2019. Because of the sudden change and lack of data on how the popularity would recover, it made modeling and forecasting a very difficult task. 
+  
+  Overall, given the contest of the data with the pandemic, our model does a very good job fitting the data. On the other hand, he use of a spline coupled with the uncertainty on the actual affect of the pandemic on the popularity leads to the conclusion that the forecasting method might not be the best. To create a better forecast, there are other factors we need to take into account. For example, the rebound of the popularity is closely tied with the economic rebound for the nation. In conclusion, the trend and seasonality are well estimated, but we need more data to accurately forecast.
+
+
+## Acknowledgements
+
+We would like to thank Brianna Heggeseth, our Correlated Data professor, who taught us the skills necessary to perform this analysis and also provided us with constructive feedback and oversight along the way. In addition, the resources found at [https://bcheggeseth.github.io/CorrelatedData/](https://bcheggeseth.github.io/CorrelatedData/) were used during this project.
