@@ -2,7 +2,7 @@
 title: "Nolan E. Meyer"
 description: |
   Aspiring Data Scientist/Analyst
-image: headshot.jpeg
+image: headshot.jpg
 links:
   - label: LinkedIn
     url: "https://www.linkedin.com/in/nolan-meyer-983ab1199/"
